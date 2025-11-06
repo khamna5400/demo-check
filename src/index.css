@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* Hiver Brand Colors - Vibrant Yellow with Pink Accents */
+    --background: 0 0% 100%;
+    --foreground: 0 0% 6%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 6%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 6%;
+
+    /* Primary - Vibrant Golden Yellow */
+    --primary: 45 100% 51%;
+    --primary-foreground: 0 0% 6%;
+    
+    /* Secondary - Warm Pink/Coral */
+    --secondary: 345 100% 70%;
+    --secondary-foreground: 0 0% 100%;
+
+    /* Muted - Soft neutrals */
+    --muted: 0 0% 96%;
+    --muted-foreground: 0 0% 45%;
+
+    /* Accent - Pink */
+    --accent: 345 100% 70%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 90%;
+    --input: 0 0% 90%;
+    --ring: 45 100% 51%;
+
+    --radius: 0.75rem;
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(45 100% 51%), hsl(345 100% 70%));
+    --gradient-accent: linear-gradient(135deg, hsl(345 100% 70%), hsl(345 100% 75%));
+    --gradient-hero: linear-gradient(180deg, hsl(0 0% 100%), hsl(45 100% 98%));
+    
+    /* Shadows & Glows */
+    --shadow-card: 0 2px 12px -2px hsl(45 100% 51% / 0.12);
+    --shadow-hover: 0 8px 24px -4px hsl(45 100% 51% / 0.18);
+    --glow-yellow: 0 0 40px hsl(45 100% 51% / 0.3);
+    --glow-pink: 0 0 40px hsl(345 100% 70% / 0.3);
+    
+    /* Animations */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .dark {
+    --background: 0 0% 6%;
+    --foreground: 0 0% 95%;
+
+    --card: 0 0% 10%;
+    --card-foreground: 0 0% 95%;
+
+    --popover: 0 0% 10%;
+    --popover-foreground: 0 0% 95%;
+
+    --primary: 45 100% 51%;
+    --primary-foreground: 0 0% 6%;
+
+    --secondary: 345 100% 70%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 0 0% 20%;
+    --muted-foreground: 0 0% 65%;
+
+    --accent: 345 100% 70%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 18%;
+    --input: 0 0% 18%;
+    --ring: 45 100% 51%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-body antialiased;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading font-bold tracking-tight;
+  }
+}

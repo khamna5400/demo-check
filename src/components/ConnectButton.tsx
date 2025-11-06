@@ -1,0 +1,160 @@
+import { useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import { UserPlus, UserMinus, Clock, Loader2 } from "lucide-react";
+
+interface ConnectButtonProps {
+  userId: string;
+  currentUserId: string | undefined;
+  onConnectionChange?: () => void;
+}
+
+export const ConnectButton = ({ userId, currentUserId, onConnectionChange }: ConnectButtonProps) => {
+  const [connectionStatus, setConnectionStatus] = useState<'none' | 'pending_sent' | 'pending_received' | 'connected'>('none');
+  const [loading, setLoading] = useState(true);
+  const [processing, setProcessing] = useState(false);
+
+  useEffect(() => {
+    if (currentUserId) {
+      checkConnectionStatus();
+    } else {
+      setLoading(false);
+    }
+  }, [currentUserId, userId]);
+
+  const checkConnectionStatus = async () => {
+    if (!currentUserId) return;
+
+    const { data, error } = await supabase
+      .from("connections")
+      .select("*")
+      .or(`and(user_id.eq.${currentUserId},friend_id.eq.${userId}),and(user_id.eq.${userId},friend_id.eq.${currentUserId})`)
+      .maybeSingle();
+
+    if (!error && data) {
+      if (data.status === 'accepted') {
+        setConnectionStatus('connected');
+      } else if (data.user_id === currentUserId) {
+        setConnectionStatus('pending_sent');
+      } else {
+        setConnectionStatus('pending_received');
+      }
+    } else {
+      setConnectionStatus('none');
+    }
+    setLoading(false);
+  };
+
+  const handleConnect = async () => {
+    if (!currentUserId) {
+      toast.error("Please sign in to connect with users");
+      return;
+    }
+
+    setProcessing(true);
+
+    if (connectionStatus === 'connected' || connectionStatus === 'pending_sent') {
+      // Remove connection
+      const { error } = await supabase
+        .from("connections")
+        .delete()
+        .or(`and(user_id.eq.${currentUserId},friend_id.eq.${userId}),and(user_id.eq.${userId},friend_id.eq.${currentUserId})`);
+
+      if (error) {
+        toast.error("Failed to remove connection");
+        console.error(error);
+      } else {
+        setConnectionStatus('none');
+        toast.success(connectionStatus === 'connected' ? "Connection removed" : "Request cancelled");
+        onConnectionChange?.();
+      }
+    } else if (connectionStatus === 'pending_received') {
+      // Accept connection
+      const { error } = await supabase
+        .from("connections")
+        .update({ status: 'accepted' })
+        .eq('user_id', userId)
+        .eq('friend_id', currentUserId);
+
+      if (error) {
+        toast.error("Failed to accept connection");
+        console.error(error);
+      } else {
+        setConnectionStatus('connected');
+        toast.success("Connection accepted!");
+        onConnectionChange?.();
+      }
+    } else {
+      // Send connection request
+      const { error } = await supabase
+        .from("connections")
+        .insert({ user_id: currentUserId, friend_id: userId, status: 'pending' });
+
+      if (error) {
+        toast.error("Failed to send connection request");
+        console.error(error);
+      } else {
+        setConnectionStatus('pending_sent');
+        toast.success("Connection request sent!");
+        onConnectionChange?.();
+      }
+    }
+
+    setProcessing(false);
+  };
+
+  if (loading) {
+    return (
+      <Button variant="outline" size="sm" disabled>
+        <Loader2 className="h-4 w-4 animate-spin" />
+      </Button>
+    );
+  }
+
+  if (!currentUserId || currentUserId === userId) {
+    return null;
+  }
+
+  const getButtonContent = () => {
+    if (processing) {
+      return <Loader2 className="h-4 w-4 animate-spin mr-2" />;
+    }
+
+    switch (connectionStatus) {
+      case 'connected':
+        return <UserMinus className="h-4 w-4 mr-2" />;
+      case 'pending_sent':
+        return <Clock className="h-4 w-4 mr-2" />;
+      case 'pending_received':
+        return <UserPlus className="h-4 w-4 mr-2" />;
+      default:
+        return <UserPlus className="h-4 w-4 mr-2" />;
+    }
+  };
+
+  const getButtonText = () => {
+    switch (connectionStatus) {
+      case 'connected':
+        return "Connected";
+      case 'pending_sent':
+        return "Pending";
+      case 'pending_received':
+        return "Accept";
+      default:
+        return "Connect";
+    }
+  };
+
+  return (
+    <Button
+      variant={connectionStatus === 'none' || connectionStatus === 'pending_received' ? "default" : "outline"}
+      size="sm"
+      onClick={handleConnect}
+      disabled={processing}
+    >
+      {getButtonContent()}
+      {getButtonText()}
+    </Button>
+  );
+};
