@@ -1,6 +1,9 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
+import { db, storage } from "@/integrations/firebase/client";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useAuth } from "@/hooks/useAuth";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
@@ -168,20 +171,24 @@ const CreateHive = () => {
 
       // Handle image upload based on mode
       if (imageMode === 'file' && imageFile) {
-        const fileExt = imageFile.name.split('.').pop();
-        const fileName = `${user.id}/${Date.now()}.${fileExt}`;
-        
-        const { error: uploadError, data } = await supabase.storage
-          .from('hive-images')
-          .upload(fileName, imageFile);
-
-        if (uploadError) throw uploadError;
-
-        const { data: { publicUrl } } = supabase.storage
-          .from('hive-images')
-          .getPublicUrl(fileName);
-        
-        coverImageUrl = publicUrl;
+        if (isSupabaseConfigured) {
+          const fileExt = imageFile.name.split('.').pop();
+          const fileName = `${user.id}/${Date.now()}.${fileExt}`;
+          const { error: uploadError } = await supabase.storage
+            .from('hive-images')
+            .upload(fileName, imageFile);
+          if (uploadError) throw uploadError;
+          const { data: { publicUrl } } = supabase.storage
+            .from('hive-images')
+            .getPublicUrl(fileName);
+          coverImageUrl = publicUrl;
+        } else {
+          const fileExt = imageFile.name.split('.').pop();
+          const path = `hive-images/${(user as any).uid}/${Date.now()}.${fileExt}`;
+          const ref = storageRef(storage, path);
+          await uploadBytes(ref, imageFile);
+          coverImageUrl = await getDownloadURL(ref);
+        }
       } else if (imageMode === 'url' && imageUrl) {
         coverImageUrl = imageUrl;
       } else if (imageMode === 'preset' && selectedPreset) {
@@ -189,20 +196,35 @@ const CreateHive = () => {
         coverImageUrl = preset ? `preset:${preset.id}` : null;
       }
 
-      const { error } = await supabase.from("hives").insert([{
-        title,
-        description,
-        location,
-        category: category as any,
-        event_date: format(date, "yyyy-MM-dd"),
-        event_time: time,
-        host_id: user.id,
-        cover_image_url: coverImageUrl,
-        recurrence_type: recurrenceType,
-        recurrence_end_date: recurrenceEndDate ? format(recurrenceEndDate, "yyyy-MM-dd") : null,
-      }]);
-
-      if (error) throw error;
+      if (isSupabaseConfigured) {
+        const { error } = await supabase.from("hives").insert([{
+          title,
+          description,
+          location,
+          category: category as any,
+          event_date: format(date, "yyyy-MM-dd"),
+          event_time: time,
+          host_id: (user as any).id,
+          cover_image_url: coverImageUrl,
+          recurrence_type: recurrenceType,
+          recurrence_end_date: recurrenceEndDate ? format(recurrenceEndDate, "yyyy-MM-dd") : null,
+        }]);
+        if (error) throw error;
+      } else {
+        await addDoc(collection(db, "hives"), {
+          title,
+          description,
+          location,
+          category,
+          event_date: format(date, "yyyy-MM-dd"),
+          event_time: time,
+          host_id: (user as any).uid,
+          cover_image_url: coverImageUrl,
+          recurrence_type: recurrenceType,
+          recurrence_end_date: recurrenceEndDate ? format(recurrenceEndDate, "yyyy-MM-dd") : null,
+          created_at: serverTimestamp(),
+        });
+      }
 
       toast.success("Hive created successfully! 🎉");
       navigate("/");

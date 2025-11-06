@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
+import { db } from "@/integrations/firebase/client";
+import { collection, query, where, getDocs, addDoc, deleteDoc, doc, updateDoc } from "firebase/firestore";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { UserPlus, UserMinus, Clock, Loader2 } from "lucide-react";
@@ -26,20 +28,37 @@ export const ConnectButton = ({ userId, currentUserId, onConnectionChange }: Con
   const checkConnectionStatus = async () => {
     if (!currentUserId) return;
 
-    const { data, error } = await supabase
-      .from("connections")
-      .select("*")
-      .or(`and(user_id.eq.${currentUserId},friend_id.eq.${userId}),and(user_id.eq.${userId},friend_id.eq.${currentUserId})`)
-      .maybeSingle();
-
-    if (!error && data) {
-      if (data.status === 'accepted') {
-        setConnectionStatus('connected');
-      } else if (data.user_id === currentUserId) {
-        setConnectionStatus('pending_sent');
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase
+        .from("connections")
+        .select("*")
+        .or(`and(user_id.eq.${currentUserId},friend_id.eq.${userId}),and(user_id.eq.${userId},friend_id.eq.${currentUserId})`)
+        .maybeSingle();
+      if (!error && data) {
+        if (data.status === 'accepted') setConnectionStatus('connected');
+        else if (data.user_id === currentUserId) setConnectionStatus('pending_sent');
+        else setConnectionStatus('pending_received');
       } else {
-        setConnectionStatus('pending_received');
+        setConnectionStatus('none');
       }
+      setLoading(false);
+      return;
+    }
+
+    // Firestore fallback
+    const q = query(
+      collection(db, "connections"),
+      where("user_id", "in", [currentUserId, userId]),
+      where("friend_id", "in", [currentUserId, userId])
+    );
+    const snap = await getDocs(q);
+    const match = snap.docs
+      .map(d => ({ id: d.id, ...d.data() } as any))
+      .find(d => (d.user_id === currentUserId && d.friend_id === userId) || (d.user_id === userId && d.friend_id === currentUserId));
+    if (match) {
+      if (match.status === 'accepted') setConnectionStatus('connected');
+      else if (match.user_id === currentUserId) setConnectionStatus('pending_sent');
+      else setConnectionStatus('pending_received');
     } else {
       setConnectionStatus('none');
     }
@@ -55,46 +74,74 @@ export const ConnectButton = ({ userId, currentUserId, onConnectionChange }: Con
     setProcessing(true);
 
     if (connectionStatus === 'connected' || connectionStatus === 'pending_sent') {
-      // Remove connection
-      const { error } = await supabase
-        .from("connections")
-        .delete()
-        .or(`and(user_id.eq.${currentUserId},friend_id.eq.${userId}),and(user_id.eq.${userId},friend_id.eq.${currentUserId})`);
-
-      if (error) {
-        toast.error("Failed to remove connection");
-        console.error(error);
+      if (isSupabaseConfigured) {
+        const { error } = await supabase
+          .from("connections")
+          .delete()
+          .or(`and(user_id.eq.${currentUserId},friend_id.eq.${userId}),and(user_id.eq.${userId},friend_id.eq.${currentUserId})`);
+        if (error) {
+          toast.error("Failed to remove connection");
+          console.error(error);
+        } else {
+          setConnectionStatus('none');
+          toast.success(connectionStatus === 'connected' ? "Connection removed" : "Request cancelled");
+          onConnectionChange?.();
+        }
       } else {
+        const q = query(
+          collection(db, "connections"),
+          where("user_id", "in", [currentUserId, userId]),
+          where("friend_id", "in", [currentUserId, userId])
+        );
+        const snap = await getDocs(q);
+        await Promise.all(snap.docs.map(d => deleteDoc(doc(db, "connections", d.id))));
         setConnectionStatus('none');
         toast.success(connectionStatus === 'connected' ? "Connection removed" : "Request cancelled");
         onConnectionChange?.();
       }
     } else if (connectionStatus === 'pending_received') {
-      // Accept connection
-      const { error } = await supabase
-        .from("connections")
-        .update({ status: 'accepted' })
-        .eq('user_id', userId)
-        .eq('friend_id', currentUserId);
-
-      if (error) {
-        toast.error("Failed to accept connection");
-        console.error(error);
+      if (isSupabaseConfigured) {
+        const { error } = await supabase
+          .from("connections")
+          .update({ status: 'accepted' })
+          .eq('user_id', userId)
+          .eq('friend_id', currentUserId);
+        if (error) {
+          toast.error("Failed to accept connection");
+          console.error(error);
+        } else {
+          setConnectionStatus('connected');
+          toast.success("Connection accepted!");
+          onConnectionChange?.();
+        }
       } else {
+        // Find pending doc and mark accepted
+        const q = query(
+          collection(db, "connections"),
+          where("user_id", "==", userId),
+          where("friend_id", "==", currentUserId)
+        );
+        const snap = await getDocs(q);
+        await Promise.all(snap.docs.map(d => updateDoc(doc(db, "connections", d.id), { status: 'accepted' })));
         setConnectionStatus('connected');
         toast.success("Connection accepted!");
         onConnectionChange?.();
       }
     } else {
-      // Send connection request
-      const { error } = await supabase
-        .from("connections")
-        .insert({ user_id: currentUserId, friend_id: userId, status: 'pending' });
-
-      if (error) {
-        toast.error("Failed to send connection request");
-        console.error(error);
+      if (isSupabaseConfigured) {
+        const { error } = await supabase
+          .from("connections")
+          .insert({ user_id: currentUserId, friend_id: userId, status: 'pending' });
+        if (error) {
+          toast.error("Failed to send connection request");
+          console.error(error);
+        } else {
+          setConnectionStatus('pending_sent');
+          toast.success("Connection request sent!");
+          onConnectionChange?.();
+        }
       } else {
+        await addDoc(collection(db, "connections"), { user_id: currentUserId, friend_id: userId, status: 'pending' });
         setConnectionStatus('pending_sent');
         toast.success("Connection request sent!");
         onConnectionChange?.();

@@ -2,7 +2,7 @@ import { useState, useEffect, createContext, useContext, ReactNode } from "react
 import { User as FirebaseUser } from "firebase/auth";
 import { auth } from "@/integrations/firebase/client";
 import { onAuthStateChanged, getIdToken, updateProfile } from "firebase/auth";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/integrations/firebase/client";
 import { toast } from "sonner";
 
@@ -74,7 +74,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         } catch {
           setSession(null);
         }
-        await fetchProfile(firebaseUser.uid);
+        const existing = await fetchProfile(firebaseUser.uid);
+        if (!existing) {
+          // Create a minimal profile document on first login
+          await setDoc(doc(db, "profiles", firebaseUser.uid), {
+            id: firebaseUser.uid,
+            email: firebaseUser.email ?? null,
+            name: firebaseUser.displayName ?? "",
+            avatar_url: firebaseUser.photoURL ?? null,
+            created_at: serverTimestamp(),
+          }, { merge: true });
+          await fetchProfile(firebaseUser.uid);
+        }
       } else {
         setUser(null);
         setSession(null);

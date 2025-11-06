@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
+import { db } from "@/integrations/firebase/client";
+import { collection, query, where, getDocs, addDoc, deleteDoc, doc } from "firebase/firestore";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { UserPlus, UserMinus, Loader2 } from "lucide-react";
@@ -25,16 +27,26 @@ export const FollowButton = ({ artistId, currentUserId }: FollowButtonProps) => 
   const checkFollowStatus = async () => {
     if (!currentUserId) return;
 
-    const { data, error } = await supabase
-      .from("followers")
-      .select("id")
-      .eq("user_id", currentUserId)
-      .eq("artist_id", artistId)
-      .maybeSingle();
-
-    if (!error) {
-      setIsFollowing(!!data);
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase
+        .from("followers")
+        .select("id")
+        .eq("user_id", currentUserId)
+        .eq("artist_id", artistId)
+        .maybeSingle();
+      if (!error) setIsFollowing(!!data);
+      setLoading(false);
+      return;
     }
+
+    // Firestore fallback
+    const q = query(
+      collection(db, "followers"),
+      where("user_id", "==", currentUserId),
+      where("artist_id", "==", artistId)
+    );
+    const snap = await getDocs(q);
+    setIsFollowing(!snap.empty);
     setLoading(false);
   };
 
@@ -47,30 +59,45 @@ export const FollowButton = ({ artistId, currentUserId }: FollowButtonProps) => 
     setProcessing(true);
 
     if (isFollowing) {
-      // Unfollow
-      const { error } = await supabase
-        .from("followers")
-        .delete()
-        .eq("user_id", currentUserId)
-        .eq("artist_id", artistId);
-
-      if (error) {
-        toast.error("Failed to unfollow");
-        console.error(error);
+      if (isSupabaseConfigured) {
+        const { error } = await supabase
+          .from("followers")
+          .delete()
+          .eq("user_id", currentUserId)
+          .eq("artist_id", artistId);
+        if (error) {
+          toast.error("Failed to unfollow");
+          console.error(error);
+        } else {
+          setIsFollowing(false);
+          toast.success("Unfollowed successfully");
+        }
       } else {
+        // Find and delete matching doc(s)
+        const q = query(
+          collection(db, "followers"),
+          where("user_id", "==", currentUserId),
+          where("artist_id", "==", artistId)
+        );
+        const snap = await getDocs(q);
+        await Promise.all(snap.docs.map(d => deleteDoc(doc(db, "followers", d.id))));
         setIsFollowing(false);
         toast.success("Unfollowed successfully");
       }
     } else {
-      // Follow
-      const { error } = await supabase
-        .from("followers")
-        .insert({ user_id: currentUserId, artist_id: artistId });
-
-      if (error) {
-        toast.error("Failed to follow");
-        console.error(error);
+      if (isSupabaseConfigured) {
+        const { error } = await supabase
+          .from("followers")
+          .insert({ user_id: currentUserId, artist_id: artistId });
+        if (error) {
+          toast.error("Failed to follow");
+          console.error(error);
+        } else {
+          setIsFollowing(true);
+          toast.success("Following! You'll see their posts and events.");
+        }
       } else {
+        await addDoc(collection(db, "followers"), { user_id: currentUserId, artist_id: artistId });
         setIsFollowing(true);
         toast.success("Following! You'll see their posts and events.");
       }

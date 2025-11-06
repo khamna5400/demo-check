@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
+import { db } from "@/integrations/firebase/client";
+import { doc, getDoc, collection, getDocs, query, where, addDoc, deleteDoc } from "firebase/firestore";
 import { useAuth } from "@/hooks/useAuth";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
@@ -40,43 +42,61 @@ const HiveDetail = () => {
 
   const fetchHiveDetails = async () => {
     setLoading(true);
-    
-    // Fetch hive details
-    const { data: hiveData, error: hiveError } = await supabase
-      .from("hives")
-      .select("*")
-      .eq("id", id)
-      .single();
-
-    if (hiveError) {
-      toast.error("Failed to load hive details");
-      navigate("/");
+    if (isSupabaseConfigured) {
+      const { data: hiveData, error: hiveError } = await supabase
+        .from("hives")
+        .select("*")
+        .eq("id", id)
+        .single();
+      if (hiveError) {
+        toast.error("Failed to load hive details");
+        navigate("/");
+        return;
+      }
+      setHive(hiveData);
+      const { data: hostData } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", hiveData.host_id)
+        .single();
+      setHost(hostData);
+      const { data: rsvpData } = await supabase
+        .from("hive_rsvps")
+        .select("*, profiles(*)")
+        .eq("hive_id", id);
+      setAttendees(rsvpData || []);
+      if (user) {
+        const userRSVP = rsvpData?.find((r) => r.user_id === (user as any).id);
+        setHasRSVP(!!userRSVP);
+      }
+      setLoading(false);
       return;
     }
 
+    // Firestore fallback
+    const hiveSnap = await getDoc(doc(db, "hives", id as string));
+    if (!hiveSnap.exists()) {
+      toast.error("Hive not found");
+      navigate("/");
+      return;
+    }
+    const hiveData: any = { id, ...hiveSnap.data() };
     setHive(hiveData);
-
-    // Fetch host details
-    const { data: hostData } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", hiveData.host_id)
-      .single();
-    setHost(hostData);
-
-    // Fetch attendees
-    const { data: rsvpData } = await supabase
-      .from("hive_rsvps")
-      .select("*, profiles(*)")
-      .eq("hive_id", id);
-    setAttendees(rsvpData || []);
-
-    // Check if current user has RSVP'd
+    const hostSnap = await getDoc(doc(db, "profiles", hiveData.host_id));
+    setHost(hostSnap.exists() ? hostSnap.data() : null);
+    const rsvpQ = query(collection(db, "hive_rsvps"), where("hive_id", "==", id));
+    const rsvpSnap = await getDocs(rsvpQ);
+    const rsvps: any[] = rsvpSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const attendeeProfiles = await Promise.all(rsvps.map(async r => {
+      const p = await getDoc(doc(db, "profiles", r.user_id));
+      return { profiles: p.exists() ? p.data() : null };
+    }));
+    const attendeesCombined = rsvps.map((r, i) => ({ ...r, ...attendeeProfiles[i] }));
+    setAttendees(attendeesCombined);
     if (user) {
-      const userRSVP = rsvpData?.find((r) => r.user_id === user.id);
+      const userRSVP = rsvps.find(r => r.user_id === (user as any).uid);
       setHasRSVP(!!userRSVP);
     }
-
     setLoading(false);
   };
 
@@ -91,30 +111,37 @@ const HiveDetail = () => {
 
     try {
       if (hasRSVP) {
-        // Remove RSVP
-        const { error } = await supabase
-          .from("hive_rsvps")
-          .delete()
-          .eq("hive_id", id)
-          .eq("user_id", user.id);
-
-        if (error) throw error;
-        toast.success("RSVP removed");
-        setHasRSVP(false);
+        if (isSupabaseConfigured) {
+          const { error } = await supabase
+            .from("hive_rsvps")
+            .delete()
+            .eq("hive_id", id)
+            .eq("user_id", (user as any).id);
+          if (error) throw error;
+          toast.success("RSVP removed");
+          setHasRSVP(false);
+        } else {
+          const q = query(collection(db, "hive_rsvps"), where("hive_id", "==", id), where("user_id", "==", (user as any).uid));
+          const snap = await getDocs(q);
+          await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+          toast.success("RSVP removed");
+          setHasRSVP(false);
+        }
       } else {
-        // Add RSVP
-        const { error } = await supabase
-          .from("hive_rsvps")
-          .insert({
-            hive_id: id,
-            user_id: user.id,
-          });
-
-        if (error) throw error;
-        toast.success("You're in! See you there 🎉");
-        setHasRSVP(true);
+        if (isSupabaseConfigured) {
+          const { error } = await supabase
+            .from("hive_rsvps")
+            .insert({ hive_id: id, user_id: (user as any).id });
+          if (error) throw error;
+          toast.success("You're in! See you there 🎉");
+          setHasRSVP(true);
+        } else {
+          await addDoc(collection(db, "hive_rsvps"), { hive_id: id, user_id: (user as any).uid });
+          toast.success("You're in! See you there 🎉");
+          setHasRSVP(true);
+        }
       }
-      
+
       fetchHiveDetails();
     } catch (error: any) {
       toast.error(error.message || "Failed to update RSVP");

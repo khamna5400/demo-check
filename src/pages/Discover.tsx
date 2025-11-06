@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
+import { db } from "@/integrations/firebase/client";
+import { collection, getDocs, query, where } from "firebase/firestore";
 import { useAuth } from "@/hooks/useAuth";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
@@ -31,10 +33,11 @@ const Discover = () => {
     }
 
     const loadData = async () => {
-      await fetchUsers(user.id);
-      await fetchConnections(user.id);
-      await fetchSuggestedConnections(user.id);
-      await fetchArtists(user.id);
+      const uid = (user as any).uid || (user as any).id;
+      await fetchUsers(uid);
+      await fetchConnections(uid);
+      await fetchSuggestedConnections(uid);
+      await fetchArtists(uid);
       setLoading(false);
     };
 
@@ -55,99 +58,101 @@ const Discover = () => {
   }, [searchQuery, users]);
 
   const fetchUsers = async (currentUserId: string) => {
-    // Use the secure function that only exposes public profile data
-    const { data, error } = await supabase.rpc('get_all_public_profiles');
-
-    if (error) {
-      toast.error("Failed to load users");
-      console.error(error);
-    } else {
-      // Filter out current user
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase.rpc('get_all_public_profiles');
+      if (error) {
+        toast.error("Failed to load users");
+        console.error(error);
+        return;
+      }
       const filteredData = data?.filter((u: any) => u.id !== currentUserId) || [];
       setUsers(filteredData);
       setFilteredUsers(filteredData);
+      return;
     }
+    const snap = await getDocs(collection(db, "profiles"));
+    const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter(u => u.id !== currentUserId);
+    setUsers(docs);
+    setFilteredUsers(docs);
   };
 
   const fetchConnections = async (userId: string) => {
-    const { data, error } = await supabase
-      .from("connections")
-      .select("*")
-      .or(`user_id.eq.${userId},friend_id.eq.${userId}`);
-
-    if (error) {
-      console.error("Error fetching connections:", error);
-    } else {
-      setConnections(data || []);
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase
+        .from("connections")
+        .select("*")
+        .or(`user_id.eq.${userId},friend_id.eq.${userId}`);
+      if (!error) setConnections(data || []);
+      return;
     }
+    const q1 = query(collection(db, "connections"), where("user_id", "==", userId));
+    const q2 = query(collection(db, "connections"), where("friend_id", "==", userId));
+    const [s1, s2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+    const data = [...s1.docs, ...s2.docs].map(d => ({ id: d.id, ...d.data() } as any));
+    setConnections(data);
   };
 
   const fetchSuggestedConnections = async (userId: string) => {
-    try {
-      const { data, error } = await supabase.rpc('get_connection_suggestions', {
-        for_user_id: userId,
-        limit_count: 6
-      });
-
-      if (error) throw error;
-      setSuggestedUsers(data || []);
-    } catch (error) {
-      console.error("Failed to fetch suggested connections:", error);
+    if (isSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase.rpc('get_connection_suggestions', { for_user_id: userId, limit_count: 6 });
+        if (!error) setSuggestedUsers(data || []);
+      } catch (e) {
+        console.error("Failed to fetch suggested connections:", e);
+      }
+      return;
     }
+    // Simple heuristic: top profiles not already connected and not current user
+    const snap = await getDocs(collection(db, "profiles"));
+    const everyone = snap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter(u => u.id !== userId);
+    const connectedIds = new Set<string>();
+    connections.forEach(c => { connectedIds.add(c.user_id === userId ? c.friend_id : c.user_id); });
+    const suggestions = everyone.filter(u => !connectedIds.has(u.id)).slice(0, 6);
+    setSuggestedUsers(suggestions);
   };
 
   const fetchArtists = async (currentUserId: string) => {
-    // Use the secure function that only exposes public profile data
-    const { data, error } = await supabase.rpc('get_all_public_profiles');
-
-    if (error) {
-      console.error("Error fetching artists:", error);
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase.rpc('get_all_public_profiles');
+      if (error) return;
+      const artistData = data?.filter((p: any) => p.user_type === 'artist' && p.id !== currentUserId).slice(0, 6);
+      const artistIds = artistData?.map(a => a.id) || [];
+      if (artistIds.length > 0) {
+        const { data: followersData } = await supabase.from("followers").select("artist_id").in("artist_id", artistIds);
+        const followerCounts = new Map<string, number>();
+        followersData?.forEach(f => followerCounts.set(f.artist_id, (followerCounts.get(f.artist_id) || 0) + 1));
+        const withCounts = artistData?.map(a => ({ ...a, follower_count: followerCounts.get(a.id) || 0 }));
+        setArtists(withCounts || []);
+      } else setArtists(artistData || []);
       return;
     }
-
-    // Filter for artists only, exclude current user, and limit results
-    const artistData = data
-      ?.filter((p: any) => p.user_type === 'artist' && p.id !== currentUserId)
-      .sort((a: any, b: any) => (b.xp || 0) - (a.xp || 0))
-      .slice(0, 6);
-
-    // Get follower counts separately
-    const artistIds = artistData?.map(a => a.id) || [];
-    if (artistIds.length > 0) {
-      const { data: followersData } = await supabase
-        .from("followers")
-        .select("artist_id")
-        .in("artist_id", artistIds);
-
-      const followerCounts = new Map<string, number>();
-      followersData?.forEach(f => {
-        followerCounts.set(f.artist_id, (followerCounts.get(f.artist_id) || 0) + 1);
-      });
-
-      const artistsWithFollowers = artistData?.map(artist => ({
-        ...artist,
-        follower_count: followerCounts.get(artist.id) || 0
-      }));
-
-      setArtists(artistsWithFollowers || []);
-    } else {
-      setArtists(artistData || []);
-    }
+    const snap = await getDocs(collection(db, "profiles"));
+    const all = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+    const artistData = all.filter(p => p.user_type === 'artist' && p.id !== currentUserId).slice(0, 6);
+    // follower counts via Firestore
+    const counts = await Promise.all(artistData.map(async a => {
+      const qf = query(collection(db, "followers"), where("artist_id", "==", a.id));
+      const fs = await getDocs(qf);
+      return { id: a.id, count: fs.size };
+    }));
+    const countMap = new Map(counts.map(c => [c.id, c.count]));
+    const withCounts = artistData.map(a => ({ ...a, follower_count: countMap.get(a.id) || 0 }));
+    setArtists(withCounts);
   };
 
   const getConnectionStatus = (userId: string) => {
     return connections.find(
       (c) =>
-        (c.user_id === user?.id && c.friend_id === userId) ||
-        (c.friend_id === user?.id && c.user_id === userId)
+        (c.user_id === (user as any)?.uid && c.friend_id === userId) ||
+        (c.friend_id === (user as any)?.uid && c.user_id === userId)
     );
   };
 
   const sendConnectionRequest = async (friendId: string) => {
-    const { error } = await supabase
+      const { error } = await supabase
       .from("connections")
       .insert({
-        user_id: user.id,
+        user_id: (user as any).id,
         friend_id: friendId,
         status: "pending",
       });
@@ -264,7 +269,7 @@ const Discover = () => {
                       >
                         View Profile
                       </Button>
-                      <FollowButton artistId={artist.id} currentUserId={user?.id} />
+                      <FollowButton artistId={artist.id} currentUserId={(user as any)?.uid} />
                     </div>
                   </CardContent>
                 </Card>
@@ -339,10 +344,10 @@ const Discover = () => {
                         </Button>
                         <ConnectButton 
                           userId={suggestedUser.id} 
-                          currentUserId={user?.id} 
+                          currentUserId={(user as any)?.uid} 
                           onConnectionChange={() => {
-                            fetchConnections(user.id);
-                            fetchSuggestedConnections(user.id);
+                            fetchConnections((user as any).uid);
+                            fetchSuggestedConnections((user as any).uid);
                           }} 
                         />
                       </div>
@@ -437,12 +442,12 @@ const Discover = () => {
                         View Profile
                       </Button>
                       {discoveredUser.user_type === 'artist' ? (
-                        <FollowButton artistId={discoveredUser.id} currentUserId={user?.id} />
+                        <FollowButton artistId={discoveredUser.id} currentUserId={(user as any)?.uid} />
                       ) : (
                         <ConnectButton 
                           userId={discoveredUser.id} 
-                          currentUserId={user?.id} 
-                          onConnectionChange={() => fetchConnections(user.id)} 
+                          currentUserId={(user as any)?.uid} 
+                          onConnectionChange={() => fetchConnections((user as any).uid)} 
                         />
                       )}
                     </div>
