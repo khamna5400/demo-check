@@ -1,0 +1,4 @@
+project_id = "zetxzjdlfqoqpqoqslog"
+
+[functions.recommend-hives]
+verify_jwt = true
