@@ -8,7 +8,13 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "fb:login": "npx firebase login --no-localhost || true",
+    "fb:use:dev": "npx firebase use dev",
+    "fb:use:staging": "npx firebase use staging",
+    "fb:use:prod": "npx firebase use prod",
+    "fb:deploy:rules": "npx firebase deploy --only firestore:rules,storage",
+    "fb:emulators": "npx firebase emulators:start --only firestore,storage"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -46,6 +52,7 @@
     "cmdk": "^1.1.1",
     "date-fns": "^3.6.0",
     "embla-carousel-react": "^8.6.0",
+    "firebase": "^11.10.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.462.0",
     "next-themes": "^0.3.0",
@@ -73,6 +80,7 @@
     "eslint": "^9.32.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
+    "firebase-tools": "^13.26.0",
     "globals": "^15.15.0",
     "lovable-tagger": "^1.1.10",
     "postcss": "^8.5.6",

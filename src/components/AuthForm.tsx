@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { auth } from "@/integrations/firebase/client";
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from "firebase/auth";
+import { db } from "@/integrations/firebase/client";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,32 +26,27 @@ export const AuthForm = () => {
 
     try {
       if (isLogin) {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-        if (error) throw error;
-        if (data.session) {
-          toast.success("Welcome back!");
-          navigate("/");
-        }
+        await signInWithEmailAndPassword(auth, email, password);
+        toast.success("Welcome back!");
+        navigate("/");
       } else {
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            emailRedirectTo: `${window.location.origin}/`,
-            data: {
-              name: name,
-              user_type: userType,
-            },
-          },
-        });
-        if (error) throw error;
-        if (data.session) {
-          toast.success("Account created! Welcome to Hiver!");
-          navigate("/");
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        if (cred.user) {
+          try {
+            if (name) {
+              await updateProfile(cred.user, { displayName: name });
+            }
+          } catch {}
+          await setDoc(doc(db, "profiles", cred.user.uid), {
+            id: cred.user.uid,
+            email,
+            name,
+            user_type: userType,
+            created_at: serverTimestamp(),
+          }, { merge: true });
         }
+        toast.success("Account created! Welcome to Hiver!");
+        navigate("/");
       }
     } catch (error: any) {
       toast.error(error.message || "Authentication failed");

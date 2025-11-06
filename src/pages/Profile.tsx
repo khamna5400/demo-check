@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { db, storage } from "@/integrations/firebase/client";
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { useAuth } from "@/hooks/useAuth";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
@@ -42,7 +44,7 @@ const Profile = () => {
   
   const navigate = useNavigate();
 
-  const isOwnProfile = !profileId || (user && profileId === user.id);
+  const isOwnProfile = !profileId || (user && profileId === (user as any).uid);
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -51,7 +53,7 @@ const Profile = () => {
         return;
       }
 
-      const targetUserId = profileId || user?.id;
+      const targetUserId = profileId || (user as any)?.uid;
       if (targetUserId) {
         await fetchProfile(targetUserId);
       }
@@ -63,65 +65,28 @@ const Profile = () => {
   const fetchProfile = async (userId: string) => {
     setLoading(true);
     
-    // If viewing own profile, query profiles table directly (has full access via RLS)
-    // If viewing other's profile, use secure function (excludes contact info)
-    const isOwnProfileView = user && userId === user.id;
-    
-    if (isOwnProfileView) {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", userId)
-        .single();
-
-      if (error) {
-        console.error("Error fetching profile:", error);
-        toast.error("Failed to load profile");
+    try {
+      const snap = await getDoc(doc(db, "profiles", userId));
+      if (!snap.exists()) {
+        setProfile(null);
       } else {
+        const data: any = { id: userId, ...snap.data() };
         setProfile(data);
         setName(data.name || "");
         setBio(data.bio || "");
         setLocation(data.location || "");
-        
-        // Artist fields
         setGenres(data.genres || []);
         setSocialLinks(data.social_links || {});
         setArtistBio(data.artist_bio || "");
-        
-        // Venue fields
-        setCapacity(data.capacity);
+        setCapacity(data.capacity ?? null);
         setAmenities(data.amenities || []);
         setVenueType(data.venue_type || "");
         setContactEmail(data.contact_email || "");
         setContactPhone(data.contact_phone || "");
       }
-    } else {
-      // Use secure function for other users' profiles (no contact info)
-      const { data, error } = await supabase.rpc('get_public_profile', { profile_id: userId });
-
-      if (error) {
-        console.error("Error fetching profile:", error);
-        toast.error("Failed to load profile");
-      } else if (data && data.length > 0) {
-        const profileData = data[0];
-        setProfile(profileData);
-        setName(profileData.name || "");
-        setBio(profileData.bio || "");
-        setLocation(profileData.location || "");
-        
-        // Artist fields
-        setGenres(profileData.genres || []);
-        setSocialLinks(profileData.social_links || {});
-        setArtistBio(profileData.artist_bio || "");
-        
-        // Venue fields
-        setCapacity(profileData.capacity);
-        setAmenities(profileData.amenities || []);
-        setVenueType(profileData.venue_type || "");
-        // Contact info not available for other users' profiles
-        setContactEmail("");
-        setContactPhone("");
-      }
+    } catch (err) {
+      console.error("Error fetching profile:", err);
+      toast.error("Failed to load profile");
     }
     setLoading(false);
   };
@@ -152,18 +117,14 @@ const Profile = () => {
       updateData.contact_phone = contactPhone;
     }
 
-    const { error } = await supabase
-      .from("profiles")
-      .update(updateData)
-      .eq("id", user!.id);
-
-    if (error) {
-      toast.error("Failed to update profile");
-      console.error(error);
-    } else {
+    try {
+      await setDoc(doc(db, "profiles", (user as any).uid), updateData, { merge: true });
       toast.success("Profile updated!");
       await refreshProfile();
-      await fetchProfile(user!.id);
+      await fetchProfile((user as any).uid);
+    } catch (error) {
+      toast.error("Failed to update profile");
+      console.error(error);
     }
     setSaving(false);
   };
@@ -188,41 +149,28 @@ const Profile = () => {
     setUploadingAvatar(true);
 
     try {
-      // Delete old avatar if exists
+      // Delete old avatar if exists (best-effort)
       if (profile?.avatar_url) {
-        const oldPath = profile.avatar_url.split('/').pop();
-        if (oldPath) {
-          await supabase.storage
-            .from('avatars')
-            .remove([`${user.id}/${oldPath}`]);
-        }
+        try {
+          const url = new URL(profile.avatar_url);
+          const pathname = decodeURIComponent(url.pathname.replace(/^\//, ""));
+          const oldRef = ref(storage, pathname);
+          await deleteObject(oldRef);
+        } catch {}
       }
 
-      // Upload new avatar
+      // Upload new avatar to Firebase Storage
       const fileExt = file.name.split('.').pop();
-      const fileName = `${user.id}/${Date.now()}.${fileExt}`;
-      
-      const { error: uploadError } = await supabase.storage
-        .from('avatars')
-        .upload(fileName, file);
+      const path = `avatars/${(user as any).uid}/${Date.now()}.${fileExt}`;
+      const fileRef = ref(storage, path);
+      await uploadBytes(fileRef, file);
+      const publicUrl = await getDownloadURL(fileRef);
 
-      if (uploadError) throw uploadError;
-
-      // Get public URL
-      const { data: { publicUrl } } = supabase.storage
-        .from('avatars')
-        .getPublicUrl(fileName);
-
-      // Update profile
-      const { error: updateError } = await supabase
-        .from('profiles')
-        .update({ avatar_url: publicUrl })
-        .eq('id', user.id);
-
-      if (updateError) throw updateError;
+      // Update Firestore profile with new avatar URL
+      await setDoc(doc(db, 'profiles', (user as any).uid), { avatar_url: publicUrl }, { merge: true });
 
       toast.success("Profile picture updated!");
-      await fetchProfile(user.id);
+      await fetchProfile((user as any).uid);
       await refreshProfile();
     } catch (error) {
       console.error('Error uploading avatar:', error);
@@ -304,9 +252,9 @@ const Profile = () => {
                     <h1 className="text-3xl font-bold">{profile?.name}</h1>
                     {!isOwnProfile && (
                       profile?.user_type === 'artist' ? (
-                        <FollowButton artistId={profile.id} currentUserId={user?.id} />
+                        <FollowButton artistId={profile.id} currentUserId={(user as any)?.uid} />
                       ) : (
-                        <ConnectButton userId={profile.id} currentUserId={user?.id} />
+                        <ConnectButton userId={profile.id} currentUserId={(user as any)?.uid} />
                       )
                     )}
                   </div>
