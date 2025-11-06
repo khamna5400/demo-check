@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
+import { db } from "@/integrations/firebase/client";
+import { collection, getDocs } from "firebase/firestore";
 import { useAuth } from "@/hooks/useAuth";
 import { Header } from "@/components/Header";
 import { HiveCard } from "@/components/HiveCard";
@@ -62,7 +64,8 @@ const Home = () => {
   }, [selectedCategory, searchQuery, hives]);
 
   const fetchRecommendations = async () => {
-    if (!user || !session?.access_token) return;
+    if (!user || !session) return;
+    if (!isSupabaseConfigured) return;
     setLoadingRecommendations(true);
     try {
       const { data, error } = await supabase.functions.invoke('recommend-hives', {
@@ -82,6 +85,34 @@ const Home = () => {
   };
 
   const fetchHives = async () => {
+    if (!isSupabaseConfigured) {
+      try {
+        const snap = await getDocs(collection(db, "hives"));
+        const docs = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+        const now = new Date();
+        const upcoming = docs.filter((hive: any) => {
+          const dateStr = hive.event_date;
+          const timeStr = hive.event_time;
+          if (!dateStr || !timeStr) return true;
+          try {
+            const [year, month, day] = String(dateStr).split('-').map(Number);
+            const [hours, minutes] = String(timeStr).split(':').map(Number);
+            const dt = new Date(year, (month || 1) - 1, day || 1, hours || 0, minutes || 0);
+            return dt > now;
+          } catch {
+            return true;
+          }
+        });
+        setHives(upcoming);
+        setFilteredHives(upcoming);
+      } catch (e) {
+        console.error("Failed to read hives from Firestore:", e);
+        setHives([]);
+        setFilteredHives([]);
+      }
+      return;
+    }
+
     const { data, error } = await supabase
       .from("hives")
       .select(`
