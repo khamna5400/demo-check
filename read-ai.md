@@ -91,8 +91,7 @@ Think **Facebook Events + Meetup** reimagined for Gen Z: warm design, fast local
 ## Tech stack (Web)
 - **UI:** Next.js + React + TailwindCSS
 - **Maps:** Mapbox or Google Maps
-- **Current backend (Lovable):** Supabase — **temporary**
-- **Target backend (shared with mobile):** **Firebase Auth + Firestore + Storage**
+- **Backend:** **Firebase Auth + Firestore + Storage** (migrated from Supabase)
 - **Hosting:** Vercel
 
 ---
@@ -113,8 +112,13 @@ This allows:
 /types.ts
 index.ts # selects adapter by env flag
 
-**Env switch**
-NEXT_PUBLIC_DATA_BACKEND=firebase | supabase
+**Firebase Vite env vars (required)**
+- `VITE_FIREBASE_API_KEY`
+- `VITE_FIREBASE_AUTH_DOMAIN`
+- `VITE_FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_STORAGE_BUCKET`
+- `VITE_FIREBASE_MESSAGING_SENDER_ID`
+- `VITE_FIREBASE_APP_ID`
 
 
 ---

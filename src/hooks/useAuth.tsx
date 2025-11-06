@@ -1,11 +1,14 @@
 import { useState, useEffect, createContext, useContext, ReactNode } from "react";
-import { User, Session } from "@supabase/supabase-js";
-import { supabase } from "@/integrations/supabase/client";
+import { User as FirebaseUser } from "firebase/auth";
+import { auth } from "@/integrations/firebase/client";
+import { onAuthStateChanged, getIdToken, updateProfile } from "firebase/auth";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
+import { db } from "@/integrations/firebase/client";
 import { toast } from "sonner";
 
 interface AuthContextType {
-  user: User | null;
-  session: Session | null;
+  user: FirebaseUser | null;
+  session: string | null; // idToken string
   profile: any | null;
   loading: boolean;
   refreshProfile: () => Promise<void>;
@@ -28,26 +31,23 @@ export const useAuth = () => {
 };
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [session, setSession] = useState<string | null>(null);
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = async (userId: string) => {
     try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", userId)
-        .single();
-
-      if (error) {
-        console.error("Error fetching profile:", error);
+      const ref = doc(db, "profiles", userId);
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        const data = snap.data();
+        setProfile(data);
+        return data;
+      } else {
+        setProfile(null);
         return null;
       }
-      
-      setProfile(data);
-      return data;
     } catch (error) {
       console.error("Profile fetch error:", error);
       return null;
@@ -62,105 +62,48 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     let mounted = true;
-    let retryTimeout: NodeJS.Timeout;
 
-    const initializeAuth = async () => {
-      try {
-        // Get initial session
-        const { data: { session: initialSession }, error } = await supabase.auth.getSession();
-        
-        if (error) {
-          console.error("Session fetch error:", error);
-          // Retry once after a short delay if there's an error
-          retryTimeout = setTimeout(async () => {
-            const { data: { session: retrySession } } = await supabase.auth.getSession();
-            if (mounted && retrySession) {
-              setSession(retrySession);
-              setUser(retrySession.user);
-              await fetchProfile(retrySession.user.id);
-            }
-            setLoading(false);
-          }, 1000);
-          return;
-        }
+    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (!mounted) return;
 
-        if (mounted) {
-          if (initialSession) {
-            setSession(initialSession);
-            setUser(initialSession.user);
-            await fetchProfile(initialSession.user.id);
-          }
-          setLoading(false);
-        }
-      } catch (error) {
-        console.error("Auth initialization error:", error);
-        if (mounted) {
-          setLoading(false);
-        }
-      }
-    };
-
-    // Set up single auth state listener for entire app
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, newSession) => {
-        if (!mounted) return;
-
-        console.log("Auth event:", event, "Session exists:", !!newSession);
-
-        // Handle all auth state changes properly
-        if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'USER_UPDATED') {
-          if (newSession) {
-            setSession(newSession);
-            setUser(newSession.user);
-            
-            // Fetch profile in background (defer to prevent blocking)
-            setTimeout(() => {
-              if (mounted) {
-                fetchProfile(newSession.user.id);
-              }
-            }, 0);
-          } else if (event === 'INITIAL_SESSION') {
-            // No session on initial load - user is not logged in
-            setSession(null);
-            setUser(null);
-            setProfile(null);
-            setLoading(false);
-          }
-        } else if (event === 'SIGNED_OUT') {
-          // Clear state on sign out
+      if (firebaseUser) {
+        setUser(firebaseUser);
+        try {
+          const token = await getIdToken(firebaseUser, true);
+          setSession(token);
+        } catch {
           setSession(null);
-          setUser(null);
-          setProfile(null);
-          console.log("User signed out - clearing session");
-        } else if (event === 'TOKEN_REFRESHED') {
-          // Update session with new tokens but don't re-fetch profile
-          if (newSession) {
-            setSession(newSession);
-            setUser(newSession.user);
-            console.log("Token refreshed successfully");
-          }
         }
+        const existing = await fetchProfile(firebaseUser.uid);
+        if (!existing) {
+          // Create a minimal profile document on first login
+          await setDoc(doc(db, "profiles", firebaseUser.uid), {
+            id: firebaseUser.uid,
+            email: firebaseUser.email ?? null,
+            name: firebaseUser.displayName ?? "",
+            avatar_url: firebaseUser.photoURL ?? null,
+            created_at: serverTimestamp(),
+          }, { merge: true });
+          await fetchProfile(firebaseUser.uid);
+        }
+      } else {
+        setUser(null);
+        setSession(null);
+        setProfile(null);
       }
-    );
+      setLoading(false);
+    });
 
-    initializeAuth();
-
-    // Handle browser visibility changes to ensure session remains valid
     const handleVisibilityChange = async () => {
       if (document.visibilityState === 'visible' && mounted) {
-        // When tab becomes visible again, verify session is still valid
-        try {
-          const { data: { session: currentSession }, error } = await supabase.auth.getSession();
-          if (error) {
-            console.error("Session verification error on visibility change:", error);
-          } else if (currentSession && (!session || session.access_token !== currentSession.access_token)) {
-            // Session was refreshed while tab was hidden, update it
-            setSession(currentSession);
-            setUser(currentSession.user);
-            console.log("Session updated after tab became visible");
+        const currentUser = auth.currentUser;
+        if (currentUser) {
+          try {
+            const token = await getIdToken(currentUser, true);
+            setSession(token);
+          } catch {
+            // ignore
           }
-        } catch (error) {
-          console.error("Visibility change session check error:", error);
         }
       }
     };
@@ -169,9 +112,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     return () => {
       mounted = false;
-      clearTimeout(retryTimeout);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      subscription.unsubscribe();
+      unsub();
     };
   }, []);
 

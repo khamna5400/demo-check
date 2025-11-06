@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
+  <!-- Colors from the provided icon -->
+  <defs>
+    <style>
+      .y{fill:#ffd400}
+      .p{fill:#ff4fa3}
+    </style>
+  </defs>
+
+  <!-- Top short bar -->
+  <rect class="p" x="114" y="138" width="272" height="64" rx="32"/>
+  <rect class="y" x="130" y="122" width="272" height="64" rx="32"/>
+
+  <!-- Second wider bar -->
+  <rect class="p" x="90" y="218" width="320" height="64" rx="32"/>
+  <rect class="y" x="106" y="202" width="320" height="64" rx="32"/>
+
+  <!-- Middle widest bar with drips -->
+  <rect class="p" x="74" y="298" width="352" height="64" rx="32"/>
+  <rect class="y" x="90" y="282" width="352" height="64" rx="32"/>
+  <!-- Left small drip (rounded blob) -->
+  <ellipse class="p" cx="204" cy="360" rx="22" ry="26"/>
+  <ellipse class="y" cx="196" cy="348" rx="22" ry="26"/>
+  <!-- Right long drip -->
+  <rect class="p" x="292" y="338" width="52" height="92" rx="26"/>
+  <rect class="y" x="284" y="326" width="52" height="92" rx="26"/>
+
+  <!-- Fourth wider bar -->
+  <rect class="p" x="90" y="378" width="320" height="64" rx="32"/>
+  <rect class="y" x="106" y="362" width="320" height="64" rx="32"/>
+
+  <!-- Bottom short bar -->
+  <rect class="p" x="114" y="458" width="272" height="64" rx="32"/>
+  <rect class="y" x="130" y="442" width="272" height="64" rx="32"/>
+</svg>
+

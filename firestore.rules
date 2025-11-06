@@ -1,0 +1,24 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Public read for profiles (optionally tighten to request.auth != null)
+    match /profiles/{uid} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Example: followers collection where follower performs the write
+    match /followers/{docId} {
+      allow read: if true;
+      allow create, update, delete: if request.auth != null &&
+        request.resource.data.followerId == request.auth.uid;
+    }
+
+    // Deny everything else by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
+
